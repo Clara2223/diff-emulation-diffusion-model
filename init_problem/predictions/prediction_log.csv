@@ -1,0 +1,15 @@
+timestamp,
+png,
+model_version,
+einstein_diffusion,
+kramers_barrier_height,
+kramers_transition_rate,
+device,
+
+boltzmann_md_visualization_comparison.png,
+didn't record data, old old init version model + wrong training data,
+
+phase_space_score_20260918_161138.png,
+didn't record data, from firday 18th september post lunch model
+
+2026-09-18T16:28:57,phase_space_score_20260918_162856.png,equilibrium_score_v1_small,0.00008842,2.08899469,0.00254589,mps

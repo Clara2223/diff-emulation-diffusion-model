@@ -84,3 +84,16 @@ To make it a conventional diffusion implementation, the next pieces are:
 - separate equilibrium generation from physical dynamics unless the reverse process is explicitly designed to preserve the desired dynamics.
 
 The filename `model_phase_space_score.py` describes the present capability without claiming that it is already a complete diffusion model.
+
+## New organization in `model/`
+
+Everything for the current experiment is now kept in the `model/` folder:
+
+- `model.py`: the current small score network.
+- `train.py`: score-model training.
+- `predict.py`: sampling, diagnostics, and plots.
+- `data.py`: reading the MD data.
+- `run.py`: the short entry point that connects them.
+- `future/model.py`: the saved time-direction model for future development; it is not trained by the current run.
+
+The current run is intentionally simple: it learns equilibrium samples from position, velocity, and energy. It does not yet learn the time direction. The network is a small **MLP (multilayer perceptron)** using **SiLU (Sigmoid Linear Unit)** activation functions. For local testing, use `--train-steps 500 --max-samples 10000` before increasing the settings.
