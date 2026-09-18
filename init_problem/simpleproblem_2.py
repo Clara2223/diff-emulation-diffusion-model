@@ -1,5 +1,5 @@
 from datetime import date
-from datetime import time
+from datetime import datetime
 
 import numpy as np
 import torch
@@ -14,6 +14,15 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 def load_positions(path):
     with np.load(path) as data:
         return torch.tensor(data["positions"], dtype=torch.float32)
+
+
+def potential(x, y):
+    A1, x1, y1, s1 = 3.0, -1.0, 0.0, 0.5
+    A2, x2, y2, s2 = 3.0, 1.0, 0.0, 0.5
+    k_confine = 0.2
+    g1 = A1 * np.exp(-((x - x1) ** 2 + (y - y1) ** 2) / (2 * s1 ** 2))
+    g2 = A2 * np.exp(-((x - x2) ** 2 + (y - y2) ** 2) / (2 * s2 ** 2))
+    return -(g1 + g2) + 0.5 * k_confine * (x ** 2 + y ** 2)
 
 
 class ScoreNet(nn.Module):
@@ -111,40 +120,77 @@ def calculate_green_kubo_diffusion(velocities, dt):
 
 
 def plot_results(true_samples, true_energy, gen_samples, kBT=0.4):
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5), dpi=300)
+    prediction_energy = potential(gen_samples[:, 0], gen_samples[:, 1])
+    x_prediction = np.asarray(gen_samples[:, 0])
+    y_prediction = np.asarray(gen_samples[:, 1])
 
-    axes[0].plot(true_energy[:2000], color="#2b5c8f", lw=0.8, alpha=0.8)
-    axes[0].set_xlabel("Sample Index")
-    axes[0].set_ylabel("Potential Energy $U(x,y)$ [$k_B T$]")
-    axes[0].set_title("Energy Trajectory (MD Ground-Truth)")
-    axes[0].grid(True, linestyle="--", alpha=0.5)
+    fig = plt.figure(figsize=(14, 10), dpi=300)
+    gs = fig.add_gridspec(2, 2)
 
-    axes[1].hist(true_energy, bins=50, density=True, color="#4682b4", edgecolor="black", alpha=0.7)
-    axes[1].set_xlabel("Potential Energy $U(x,y)$")
-    axes[1].set_ylabel("Probability Density")
-    axes[1].set_title("Boltzmann Energy Distribution")
-    axes[1].grid(True, linestyle="--", alpha=0.5)
+    # 2D prediction density over the potential surface.
+    ax1 = fig.add_subplot(gs[0, 0])
+    x_grid = np.linspace(-2.5, 2.5, 200)
+    y_grid = np.linspace(-2.0, 2.0, 200)
+    X, Y = np.meshgrid(x_grid, y_grid)
+    Z = potential(X, Y)
+    contour = ax1.contour(X, Y, Z, levels=12, cmap="Greys", alpha=0.5)
+    ax1.clabel(contour, inline=True, fontsize=8)
+    hb = ax1.hexbin(x_prediction, y_prediction, gridsize=45, cmap="plasma", mincnt=1)
+    fig.colorbar(hb, ax=ax1, label="Sample Density")
+    ax1.set_title("2D Model Prediction Density over $V(x,y)$")
+    ax1.set_xlabel("x")
+    ax1.set_ylabel("y")
 
-    (X, Y), free_energy_gen = free_energy_surface(gen_samples, kBT=kBT)
+    # Preserve the energy-distribution comparison from the original plot.
+    ax2 = fig.add_subplot(gs[0, 1])
+    ax2.hist(true_energy, bins=50, density=True, color="#4682b4", edgecolor="black", alpha=0.45, label="MD")
+    ax2.hist(prediction_energy, bins=40, density=True, color="#6ba2c6", edgecolor="black", alpha=0.75, label="Prediction")
+    ax2.set_title("Boltzmann Energy Distribution")
+    ax2.set_xlabel("Potential Energy $U(x, y)$")
+    ax2.set_ylabel("Probability Density")
+    ax2.grid(True, linestyle="--", alpha=0.5)
+    ax2.legend()
+
+    # Preserve the model-vs-MD free-energy comparison.
+    ax3 = fig.add_subplot(gs[1, 0])
+    (X_free, Y_free), free_energy_gen = free_energy_surface(gen_samples, kBT=kBT)
     (_, _), free_energy_true = free_energy_surface(true_samples, kBT=kBT)
-    contour = axes[2].contourf(X, Y, free_energy_gen.T, levels=20, cmap="viridis_r")
-    fig.colorbar(contour, ax=axes[2]).set_label("Free Energy $\Delta F$ [$k_B T$]")
-    axes[2].contour(X, Y, free_energy_true.T, levels=8, colors="white", linewidths=0.7, alpha=0.7)
-    axes[2].set_xlabel("Coordinate $x$ (Collective Variable)")
-    axes[2].set_ylabel("Coordinate $y$")
-    axes[2].set_title("Model Free Energy (White=MD Ground Truth)")
+    free_energy_plot = ax3.contourf(X_free, Y_free, free_energy_gen.T, levels=20, cmap="viridis_r")
+    fig.colorbar(free_energy_plot, ax=ax3).set_label("Free Energy $\\Delta F$ [$k_B T$]")
+    ax3.contour(X_free, Y_free, free_energy_true.T, levels=8, colors="white", linewidths=0.7, alpha=0.7)
+    ax3.set_xlabel("Coordinate $x$ (Collective Variable)")
+    ax3.set_ylabel("Coordinate $y$")
+    ax3.set_title("Model Free Energy (White=MD Ground Truth)")
+
+    # Predicted trajectory produced by the Langevin sampler.
+    ax4 = fig.add_subplot(gs[1, 1])
+    prediction_steps = np.arange(len(x_prediction))
+    ax4.plot(prediction_steps, x_prediction, label="x(t)", color="indigo", alpha=0.8, lw=0.8)
+    ax4.plot(prediction_steps, y_prediction, label="y(t)", color="mediumseagreen", alpha=0.6, lw=0.8)
+    ax4.axhline(-1.0, color="gray", linestyle=":", alpha=0.7, label="Well 1 Center")
+    ax4.axhline(1.0, color="gray", linestyle=":", alpha=0.7, label="Well 2 Center")
+    ax4.set_title("Model Prediction Trajectory")
+    ax4.set_xlabel("Saved Step")
+    ax4.set_ylabel("Position Coordinates")
+    ax4.legend(loc="upper right", fontsize=8)
 
     plt.tight_layout()
-    plt.savefig(f"boltzmann_md_visualization_comparison_{date}_ {time}.png", dpi=300)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = Path(__file__).resolve().parent / "predictions" / f"predictViz_underdamped_{timestamp}.png"
+    plt.savefig(output_path, dpi=300)
     plt.show()
-    print(f"Visualization saved as 'boltzmann_md_visualization_comparison_{date}_{time}.png'")
+    print(f"Visualization saved as '{output_path}'")
 
 
 #### compare to the OG training data distribution and diffusion coefficient ##
+#n_steps=100000000
+#burn_in=50000
 def main():
     root = Path(__file__).resolve().parent
-    data_path = root / "train_data" / "double_well_data_10Msteps.npz"
-
+    #data_path = root / "train_data" / "double_well_data_10Msteps.npz"
+    #data_path = root / "train_data" / f"double_well_data_{n_steps}steps_{burn_in}burn.npz"
+    data_path = '/Users/clarawimmelmann/Desktop/Energy_specialCourse/init_problem/train_data/double_well_data_100000000steps_50000burn_20260918_115938.npz'
+    
     train_data = load_positions(data_path)
     loader = DataLoader(TensorDataset(train_data), batch_size=256, shuffle=True)
 
